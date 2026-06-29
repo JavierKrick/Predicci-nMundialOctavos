@@ -20,8 +20,8 @@ BASE_ELO   = 1500
 BASE_POT   = 1850   
 PRIOR_MEAN = 1.3    
 PRIOR_PJ   = 3.0    
-PESO_ELO_MAX   = 0.65
-PESO_ELO_MIN   = 0.3
+PESO_ELO_MAX   = 0.5
+PESO_ELO_MIN   = 0.45
 PESO_STATS = 1-PESO_ELO_MAX
 
 ANFITRIONES_2026 = {"México", "Mexico", "Canadá", "Canada", "Estados Unidos", "USA", "EEUU"}
@@ -251,11 +251,11 @@ def calcular_probabilidades(t1, t2, eliminatoria=True):
     elo1 = teams_base.get(t1, [BASE_ELO])[0]
     elo2 = teams_base.get(t2, [BASE_ELO])[0]
     
-    if t1 in ANFITRIONES_2026: elo1 += 80
-    if t2 in ANFITRIONES_2026: elo2 += 80
+    if t1 in ANFITRIONES_2026: elo1 += 50
+    if t2 in ANFITRIONES_2026: elo2 += 50
     
-    loc_atk1, loc_def1 = (1.08, 0.93) if t1 in ANFITRIONES_2026 else (1.0, 1.0)
-    loc_atk2, loc_def2 = (1.08, 0.93) if t2 in ANFITRIONES_2026 else (1.0, 1.0)
+    loc_atk1, loc_def1 = (1.05, 0.95) if t1 in ANFITRIONES_2026 else (1.0, 1.0)
+    loc_atk2, loc_def2 = (1.05, 0.95) if t2 in ANFITRIONES_2026 else (1.0, 1.0)
 
     s1 = equipos_stats.get(t1, {"xg": PRIOR_MEAN, "xga": PRIOR_MEAN})
     s2 = equipos_stats.get(t2, {"xg": PRIOR_MEAN, "xga": PRIOR_MEAN})
@@ -269,8 +269,8 @@ def calcular_probabilidades(t1, t2, eliminatoria=True):
     # 1. Definir función para calcular distribución completa de un par de lambdas
     def generar_distribucion(l1, l2):
         dist = {}
-        alpha_duelo = 0.001 + 0.0001 * abs(delta_elo)
-        theta_copula = 2    
+        alpha_duelo = 0.002 + 0.0002 * abs(delta_elo)
+        theta_copula = 0.3  # Ajustado al 3.8% de Tau de Kendall real del fútbol
 
         for i in range(10):
             for j in range(10):
@@ -292,19 +292,16 @@ def calcular_probabilidades(t1, t2, eliminatoria=True):
     dist_stats = generar_distribucion(lam1_stats, lam2_stats)
     dist_elo   = generar_distribucion(lam1_elo, lam2_elo)
 
-    # 3. Ensamble de probabilidades (Ponderación final)
+    # 3. Ensamble de probabilidades (Ponderación final - LÓGICA INVERTIDA)
     d = abs(delta_elo)
-    if d >= 300:
-        w_elo = PESO_ELO_MAX
-    else:
-        w_elo = PESO_ELO_MIN + (PESO_ELO_MAX -  PESO_ELO_MIN) * (d / 300.0)
-    # Aseguramos que esté dentro del rango (por si acaso)
+    factor_distancia = float(np.minimum(1.0, d / 400.0))
+    w_elo = PESO_ELO_MAX - (PESO_ELO_MAX - PESO_ELO_MIN) * factor_distancia
+
+    # Capeo de seguridad estructural
     w_elo = max(PESO_ELO_MIN, min(PESO_ELO_MAX, w_elo))
 
     prob_90 = {k: ((1 - w_elo) * dist_stats[k] + w_elo * dist_elo[k]) 
-            for k in dist_stats.keys()}
-                
-
+               for k in dist_stats.keys()}
 
     top_90 = sorted(prob_90.items(), key=lambda x: x[1], reverse=True)[:5]
     
@@ -321,13 +318,16 @@ def calcular_probabilidades(t1, t2, eliminatoria=True):
 
     # Como ya no tenemos lam1/lam2 únicas, usamos la media de las intensidades 
     # para estimar los goles de la prórroga (un cuarto del tiempo original (no suelen agrega tiiempo))
-    lam1_et = ((1 - w_elo) * lam1_stats + w_elo * lam1_elo) * 0.25
-    lam2_et = ((1 - w_elo) * lam2_stats + w_elo * lam2_elo) * 0.25
+    # ── PRÓRROGA: Calibración empírica de fatiga y pánico ──
+    FACTOR_ET = 0.2  #(tiempo etra+ fatiga) 
+
+    lam1_et = ((1 - w_elo) * lam1_stats + w_elo * lam1_elo) * FACTOR_ET
+    lam2_et = ((1 - w_elo) * lam2_stats + w_elo * lam2_elo) * FACTOR_ET
     
-    alpha_duelo = 0.001 + 0.0003 * abs(delta_elo)# Valor consistente con la función anterior
+    alpha_et = 0.001 + 0.0002 * abs(delta_elo)
     
     prob_et = {
-        (ea, eb): prob_nb2(lam1_et, alpha_duelo, ea) * prob_nb2(lam2_et, alpha_duelo, eb)
+        (ea, eb): prob_nb2(lam1_et, alpha_et, ea) * prob_nb2(lam2_et, alpha_et, eb)
         for ea in range(5) for eb in range(5)
     }
     
@@ -348,10 +348,11 @@ def calcular_probabilidades(t1, t2, eliminatoria=True):
     
         # Probabilidad de que el equipo 1 gane en penales
     # Usamos tanh para mantenerla entre 0 y 1
-    p_pen1 = 0.5 + 0.12 * math.tanh(delta_elo / 400.0)
+    # Probabilidad de que el equipo 1 gane en penales
+    p_pen1 = 0.5 + 0.045 * math.tanh(delta_elo / 300.0)
 
-    # Aseguramos que esté en [0.35, 0.65] por si acaso
-    p_pen1 = max(0.35, min(0.65, p_pen1))
+    # El techo histórico absoluto es 54% - 46%
+    p_pen1 = max(0.46, min(0.54, p_pen1))
 
     # Probabilidad final (120' + penales)
     p_final1 = p_win1 + p_draw * p_pen1
