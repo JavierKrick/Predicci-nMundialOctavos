@@ -59,7 +59,12 @@ def entrenar_modelo_elo(partidos):
     res = modelo.fit()
     return res.params["intercepto"], res.params["delta_elo"]
 
-B0_ELO, B1_ELO = entrenar_modelo_elo(partidos_filtrados)
+B0_PROPIO, B1_PROPIO = entrenar_modelo_elo(partidos_filtrados)
+B0_ELO_Paper = 0.25
+B1_ELO_Paper = 0.0023    #tomado dee un paper
+
+B0_ELO = B0_PROPIO*(0.5)+B0_ELO_Paper*(0.5) 
+B1_ELO = B1_PROPIO*(0.5)+B1_ELO_Paper*(0.5) 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # §3 MOTOR EM: CALIBRACIÓN DE LA DIFICULTAD DEL TORNEO (Orientado a Datos)
@@ -270,7 +275,7 @@ def calcular_probabilidades(t1, t2, eliminatoria=True):
     def generar_distribucion(l1, l2):
         dist = {}
         alpha_duelo = 0.002 + 0.0002 * abs(delta_elo)
-        theta_copula = 0.3  # Ajustado al 3.8% de Tau de Kendall real del fútbol
+        theta_copula = 0.38  # Ajustado al 3.8% de Tau de Kendall real del fútbol
 
         for i in range(10):
             for j in range(10):
@@ -318,7 +323,7 @@ def calcular_probabilidades(t1, t2, eliminatoria=True):
 
     # Como ya no tenemos lam1/lam2 únicas, usamos la media de las intensidades 
     # para estimar los goles de la prórroga (un cuarto del tiempo original (no suelen agrega tiiempo))
-    # ── PRÓRROGA: Calibración empírica de fatiga y pánico ──
+    # ── PRÓRROGA: Calibración empírica de fatiga y enos tiempo de juego, etc ──
     FACTOR_ET = 0.2  #(tiempo etra+ fatiga) 
 
     lam1_et = ((1 - w_elo) * lam1_stats + w_elo * lam1_elo) * FACTOR_ET
@@ -447,3 +452,26 @@ for t1, t2 in matches:
 print("-" * (w_partido + w_top + w_top + w_probs + 10))
 print(f"Goles esperados promedio: {sum_goals_90 / n:.2f}")
 print(f"Empates esperados promedio: {sum_draw_90 / n:.2%}")
+
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# §7 AUDITORÍA DE PARÁMETROS Y PENDIENTES
+# ══════════════════════════════════════════════════════════════════════════════
+
+print("\n" + "═" * (w_partido + w_top + w_top + w_probs + 10))
+print(" AUDITORÍA DE PENDIENTES (SLOPES) Y PARÁMETROS DEL MODELO")
+print("═" * (w_partido + w_top + w_top + w_probs + 10))
+
+# Modelo 1: Regresión Histórica Elo
+print("► MODELO 1 (Regresión GLM Poisson sobre Elo):")
+print(f"  Intercepto (B0) : {B0_ELO:.4f}  (Base de goles en duelo igualado)")
+# Usamos .6f porque B1_ELO suele ser muy pequeño (ej. 0.0035)
+print(f"  Pendiente  (B1) : {B1_ELO:.6f}  (Impacto por cada punto de Elo)") 
+
+# Modelo 2: Motor EM basado en Stats
+print("\n► MODELO 2 (Motor EM de Stats Latentes):")
+print("  (Ajuste lineal respecto a la Dificultad del Torneo)")
+print(f"  Ataque  -> Intercepto: {PARAMS_TORNEO['atk'][0]:.4f} | Pendiente: {PARAMS_TORNEO['atk'][1]:.4f}")
+print(f"  Defensa -> Intercepto: {PARAMS_TORNEO['def'][0]:.4f} | Pendiente: {PARAMS_TORNEO['def'][1]:.4f}")
+print("═" * (w_partido + w_top + w_top + w_probs + 10) + "\n")
